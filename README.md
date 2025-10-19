@@ -1,2 +1,2 @@
 # MediAssistBot
-A simple RAG application bot build using Streamlit for NTU GP8000
+A Simple Medical Assistant RAG Chatbot for GP8000 Course Project
