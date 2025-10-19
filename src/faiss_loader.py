@@ -158,7 +158,6 @@ class FAISSEmbedder:
     def _init_hf(self) -> None:
         try:
             from sentence_transformers import SentenceTransformer
-            from src.config import CACHE_DIR
         except ImportError as exc:
             raise ImportError(
                 f"Required libraries not installed: {exc}\nInstall with: pip install torch sentence-transformers"
@@ -170,7 +169,6 @@ class FAISSEmbedder:
         self.model = SentenceTransformer(
             self.model_name,
             device="cuda",
-            cache_folder=str(CACHE_DIR / "sentence_transformers"),
             model_kwargs={"torch_dtype": torch.bfloat16},
         )
 

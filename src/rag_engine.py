@@ -101,7 +101,6 @@ class RagEngine:
             self._hf_embedder = SentenceTransformer(
                 self._embedding_model,
                 device="cuda",
-                cache_folder=str(CACHE_DIR / "sentence_transformers"),
                 model_kwargs={"torch_dtype": torch.bfloat16},
             )
         return self._hf_embedder
