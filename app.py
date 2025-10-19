@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import os
-from typing import Any
+from typing import Any, Optional
 
 import torch
 
@@ -199,33 +198,9 @@ def _apply_theme() -> None:
     st.markdown(_theme_css(), unsafe_allow_html=True)
 
 
-def _gpu_available_hint() -> bool:
-    try:
-        return torch.cuda.is_available()
-    except:
-        return False
-
-
-def _resolve_credentials() -> tuple[str, str]:
-    hf_cands = [
-        os.getenv(k, "").strip() for k in ("HF_API_KEY", "HUGGINGFACEHUB_API_TOKEN")
-    ]
-    try:
-        hf_cands.append(str(st.secrets.get("HF_API_KEY", "")).strip())
-    except:
-        pass
-    hf_key = next((c for c in hf_cands if c), "")
-    if hf_key:
-        os.environ.setdefault("HF_API_KEY", hf_key)
-        os.environ.setdefault("HUGGINGFACEHUB_API_TOKEN", hf_key)
-        if _gpu_available_hint():
-            return "huggingface", hf_key
-    return "demo", ""
-
-
 @st.cache_resource(show_spinner=False)
 def load_engine(
-    api_key: str,
+    api_key: Optional[str],
     docs_dir: str,
     chunk_size: int,
     chunk_overlap: int,
@@ -269,15 +244,11 @@ def _render_sidebar(
         st.markdown("## Control Panel")
         if demo_mode:
             st.warning(
-                "Demo mode is active. Add a Hugging Face API key and ensure a CUDA GPU is available to unlock live guidance.",
+                "Demo mode is active. Connect a CUDA-capable GPU to unlock live guidance.",
                 icon="⚠️",
             )
-        elif provider == "huggingface":
-            st.success(
-                "Hugging Face API key detected. Ready to assist clinicians", icon="✅"
-            )
         else:
-            st.info("No supported credentials detected.")
+            st.success("CUDA GPU detected. Ready to assist clinicians.", icon="✅")
         st.markdown("---")
         if not demo_mode:
             st.caption(
@@ -307,24 +278,14 @@ def _validate_inputs(gender: str, age: int, query: str) -> list[str]:
 
 
 def main() -> None:
-    provider, api_key = _resolve_credentials()
-    demo_mode = provider == "demo"
+    has_cuda = torch.cuda.is_available()
+    provider = "huggingface" if has_cuda else "demo"
+    demo_mode = not has_cuda
+    api_key: Optional[str] = None
 
     embedding_model = HF_EMBEDDING_MODEL
-
-    if not torch.cuda.is_available():
-        if provider == "huggingface":
-            st.error(
-                "No CUDA GPU detected. The Hugging Face pipeline requires a CUDA-capable GPU."
-            )
-            st.stop()
-        provider = "demo"
-        demo_mode = True
-
-    chat_model = HF_CHAT_MODEL if provider == "huggingface" else "N/A"
-    provider_label = (
-        "Hugging Face · Qwen3 (GPU)" if provider == "huggingface" else "Demo"
-    )
+    chat_model = HF_CHAT_MODEL if has_cuda else "N/A"
+    provider_label = "Hugging Face · Qwen3 (GPU)" if has_cuda else "Demo"
 
     control_panel = st.sidebar.empty()
     results_panel = st.sidebar.empty()
@@ -352,7 +313,7 @@ def main() -> None:
 
     if demo_mode:
         st.info(
-            "Demo mode is active. Add a Hugging Face API key and ensure GPU support to generate tailored guidance."
+            "Demo mode is active. Attach this application to a CUDA-capable GPU to generate tailored guidance."
         )
 
     with st.container():
@@ -374,7 +335,7 @@ def main() -> None:
 
     st.markdown("### Compose Message")
     if demo_mode:
-        st.caption("Provider: none detected (demo mode).")
+        st.caption("GPU: not detected (demo mode).")
 
     query = st.text_area(
         "Describe the case or ask for guidance",
@@ -416,7 +377,7 @@ def main() -> None:
     if submit:
         if demo_mode:
             st.warning(
-                "Demo mode is active. Connect a Hugging Face API key and ensure a CUDA GPU to generate responses."
+                "Demo mode is active. Attach a CUDA-capable GPU to generate responses."
             )
         elif errors := _validate_inputs(gender, int(age), query):
             for issue in errors:
@@ -427,15 +388,15 @@ def main() -> None:
                 total_time = None
                 with st.spinner(f"Initializing {provider_label} pipeline..."):
                     engine = load_engine(
-                        api_key,
-                        str(DEFAULT_DOCS_DIR),
-                        CHUNK_SIZE,
-                        CHUNK_OVERLAP,
-                        embedding_model,
-                        chat_model,
-                        TEMPERATURE,
-                        TOP_K_RESULTS,
-                        provider,
+                        api_key=api_key,
+                        docs_dir=str(DEFAULT_DOCS_DIR),
+                        chunk_size=CHUNK_SIZE,
+                        chunk_overlap=CHUNK_OVERLAP,
+                        embedding_model=embedding_model,
+                        chat_model=chat_model,
+                        temperature=TEMPERATURE,
+                        top_k=TOP_K_RESULTS,
+                        provider=provider,
                     )
 
                 with st.status(

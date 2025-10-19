@@ -38,7 +38,7 @@ class RagEngine:
     def __init__(
         self,
         provider: str,
-        api_key: str,
+        api_key: Optional[str],
         docs_dir,
         chunk_size: int,
         chunk_overlap: int,
@@ -49,16 +49,12 @@ class RagEngine:
     ) -> None:
         if provider != "huggingface":
             raise ValueError("RagEngine now supports only the Hugging Face provider.")
-        if not api_key:
-            raise ValueError(
-                "A Hugging Face API token is required to initialize RagEngine."
-            )
         if not torch.cuda.is_available():
             raise RuntimeError(
                 f"CUDA-capable GPU is required for {BOT_NAME} embeddings and generation. No CPU fallback is available."
             )
         self._provider = provider
-        self._api_key = api_key
+        self._api_key = api_key or ""
         self._docs_dir = Path(docs_dir).expanduser()
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
