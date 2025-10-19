@@ -1,7 +1,4 @@
 from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Base configuration for the RAG pipeline.
 DEFAULT_DOCS_DIR = Path("docs").expanduser()

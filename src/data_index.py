@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence
@@ -33,9 +34,16 @@ def _fingerprint_files(paths: Sequence[Path]) -> str:
 
 
 def _load_document(path: Path, base_dir: Path) -> Document:
-    text = path.read_text(encoding="utf-8")
+    text = _normalize_text(path.read_text(encoding="utf-8"))
     relative_path = path.relative_to(base_dir)
     return Document(page_content=text, metadata={"source": str(relative_path)})
+
+
+def _normalize_text(text: str) -> str:
+    """Collapse spurious whitespace that often appears in PDF exports."""
+    text = text.replace("\r\n", "\n").replace("\u00a0", " ")
+    text = re.sub(r"(?<=\S)\n(?=\S)", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 
 @dataclass(frozen=True)

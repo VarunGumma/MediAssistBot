@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+from html import escape
 
 import torch
 
@@ -148,6 +149,11 @@ input, textarea, select, .stNumberInput input, .stTextInput input {
     color: #fefefe;
 }
 
+.medibot-response .medibot-answer {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .medibot-context {
     background: rgba(14, 16, 44, 0.95);
     border-radius: 18px;
@@ -258,8 +264,7 @@ def _render_sidebar(
                 f"Cache Dir: `{CACHE_DIR}`  \n"
                 f"Chunk Size: `{CHUNK_SIZE}`  \n"
                 f"Chunk Overlap: `{CHUNK_OVERLAP}`  \n"
-                f"Top K Results: `{TOP_K_RESULTS}`  \n"
-                f"Temperature: `{TEMPERATURE}`"
+                f"Top K Results: `{TOP_K_RESULTS}`"
             )
             if total_time is not None:
                 st.caption(f"Last inference time: `{total_time:.2f}s`")
@@ -440,7 +445,7 @@ def main() -> None:
                     f"""
                     <div class="medibot-response">
                         <h3>🩺 Guidance from {BOT_NAME}</h3>
-                        <div style="line-height:1.7;">{result.answer}</div>
+                        <div class="medibot-answer" style="line-height:1.7;">{escape(result.answer)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -464,7 +469,7 @@ def main() -> None:
                                 st.markdown(f"**[{idx}] {chunk.source}**")
                                 st.markdown(f"*Relevance Score: {chunk.score:.4f}*")
                                 st.markdown(
-                                    f'<div style="background: rgba(255, 222, 89, 0.08); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 3px solid rgba(255, 222, 89, 0.5); max-height: 200px; overflow:auto;">{chunk.content.strip()}</div>',
+                                    f'<div style="background: rgba(255, 222, 89, 0.08); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 3px solid rgba(255, 222, 89, 0.5); max-height: 200px; overflow:auto; white-space: pre-wrap;">{escape(chunk.content.strip())}</div>',
                                     unsafe_allow_html=True,
                                 )
                         st.markdown("#### 📋 Quick Source List")
