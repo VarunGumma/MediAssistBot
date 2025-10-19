@@ -52,7 +52,9 @@ class RagEngine:
         if provider != "huggingface":
             raise ValueError("RagEngine now supports only the Hugging Face provider.")
         if not api_key:
-            raise ValueError("A Hugging Face API token is required to initialize RagEngine.")
+            raise ValueError(
+                "A Hugging Face API token is required to initialize RagEngine."
+            )
         if not torch.cuda.is_available():
             raise RuntimeError(
                 f"CUDA-capable GPU is required for {BOT_NAME} embeddings and generation. No CPU fallback is available."
@@ -98,30 +100,42 @@ class RagEngine:
                 "CUDA-capable GPU is required for local embeddings. No CPU fallback is available."
             )
         if not self._hf_embedder:
-            self._hf_embedder = SentenceTransformer(
-                self._embedding_model,
-                device="cuda",
-                model_kwargs={"torch_dtype": torch.bfloat16},
-            )
+            model_kwargs = {
+                "torch_dtype": torch.bfloat16,
+                "attn_implementation": "flash_attention_2",
+            }
+            tokenizer_kwargs = {"padding_side": "left"}
+            try:
+                self._hf_embedder = SentenceTransformer(
+                    self._embedding_model,
+                    device="cuda",
+                    model_kwargs=model_kwargs,
+                    tokenizer_kwargs=tokenizer_kwargs,
+                )
+            except TypeError as exc:
+                raise RuntimeError(
+                    "Installed sentence-transformers or the selected embedding model does not support FlashAttention 2. Update the dependency or choose a compatible model."
+                ) from exc
         return self._hf_embedder
 
-    def _hf_embed(self, texts: List[str]) -> np.ndarray:
+    def _hf_embed(
+        self, texts: List[str], prompt_name: Optional[str] = None
+    ) -> np.ndarray:
         try:
             model = self._get_sentence_embedder()
         except Exception as exc:
             raise RuntimeError(
                 "Failed to load the Hugging Face embedding model. Ensure sentence-transformers is installed and the selected model is compatible with your hardware."
             ) from exc
-        arr = np.asarray(
-            model.encode(
-                texts,
-                batch_size=512,
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-                show_progress_bar=True,
-            ),
-            dtype="float32",
-        )
+        encode_kwargs = {
+            "batch_size": 512,
+            "convert_to_numpy": True,
+            "normalize_embeddings": True,
+            "show_progress_bar": True,
+        }
+        if prompt_name:
+            encode_kwargs["prompt_name"] = prompt_name
+        arr = np.asarray(model.encode(texts, **encode_kwargs), dtype="float32")
         if arr.ndim == 1:
             arr = arr.reshape(1, -1)
         return arr
@@ -279,7 +293,7 @@ class RagEngine:
         search_q = self._build_retrieval_query(gender, age, query)
         if progress_callback:
             progress_callback("Embedding query...", 0.2)
-        q_emb = self._hf_embed([search_q])[0]
+        q_emb = self._hf_embed([search_q], prompt_name="query")[0]
         if progress_callback:
             progress_callback(f"Searching index ({len(kb.documents)} docs)...", 0.4)
         dists, idxs = idx.search(q_emb.reshape(1, -1), self._top_k)
