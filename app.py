@@ -322,7 +322,9 @@ def main() -> None:
         demo_mode = True
 
     chat_model = HF_CHAT_MODEL if provider == "huggingface" else "N/A"
-    provider_label = "Hugging Face · Qwen3 (GPU)" if provider == "huggingface" else "Demo"
+    provider_label = (
+        "Hugging Face · Qwen3 (GPU)" if provider == "huggingface" else "Demo"
+    )
 
     control_panel = st.sidebar.empty()
     results_panel = st.sidebar.empty()
@@ -360,11 +362,13 @@ def main() -> None:
             "Female",
             "Male",
             "Non-binary",
-            "Prefer not to say"
+            "Prefer not to say",
         ]
         col1, col2 = st.columns(2)
         with col1:
-            gender = st.selectbox("Gender", options=gender_options, index=0, label_visibility="visible")
+            gender = st.selectbox(
+                "Gender", options=gender_options, index=0, label_visibility="visible"
+            )
         with col2:
             age = st.number_input("Age", min_value=0, max_value=120, step=1, value=30)
 

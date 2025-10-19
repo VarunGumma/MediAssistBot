@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import Callable, List, Optional
 
-import faiss  # type: ignore[import]
+import faiss
+import torch
 import numpy as np
-import torch  # type: ignore[import]
-
-if TYPE_CHECKING:  # pragma: no cover
-    from sentence_transformers import SentenceTransformer  # type: ignore[import]
-    from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore[import]
+from sentence_transformers import SentenceTransformer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .config import BOT_NAME, CACHE_DIR, SYSTEM_PROMPT, TEMPERATURE, TOP_K_RESULTS
 from .data_index import KnowledgeBase, load_knowledge_base
@@ -88,13 +86,7 @@ class RagEngine:
             / f"hf_{self._ensure_knowledge_base().fingerprint}_{self._embedding_model.replace('/', '_').replace(':', '_')}"
         )
 
-    def _get_sentence_embedder(self) -> "SentenceTransformer":
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            raise RuntimeError(
-                "sentence-transformers package is required for local embeddings."
-            ) from exc
+    def _get_sentence_embedder(self) -> SentenceTransformer:
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "CUDA-capable GPU is required for local embeddings. No CPU fallback is available."
@@ -121,12 +113,7 @@ class RagEngine:
     def _hf_embed(
         self, texts: List[str], prompt_name: Optional[str] = None
     ) -> np.ndarray:
-        try:
-            model = self._get_sentence_embedder()
-        except Exception as exc:
-            raise RuntimeError(
-                "Failed to load the Hugging Face embedding model. Ensure sentence-transformers is installed and the selected model is compatible with your hardware."
-            ) from exc
+        model = self._get_sentence_embedder()
         encode_kwargs = {
             "batch_size": 512,
             "convert_to_numpy": True,
@@ -168,16 +155,8 @@ class RagEngine:
         return self._hf_index
 
     def _ensure_hf_llm(self) -> tuple[AutoTokenizer, AutoModelForCausalLM]:
-        try:
-            import torch
-        except ImportError as exc:
-            raise RuntimeError(
-                "PyTorch is required for Hugging Face generation."
-            ) from exc
         if not torch.cuda.is_available():
             raise RuntimeError("GPU is required for Hugging Face generation.")
-
-        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         if not self._hf_tokenizer:
             tok = AutoTokenizer.from_pretrained(
@@ -207,8 +186,6 @@ class RagEngine:
         return self._hf_tokenizer, self._hf_model
 
     def _generate_hf_response(self, system_prompt: str, chat_input: str) -> str:
-        import torch
-
         tok, model = self._ensure_hf_llm()
         prompt = tok.apply_chat_template(
             [
@@ -218,10 +195,7 @@ class RagEngine:
             tokenize=False,
             add_generation_prompt=True,
         )
-        inputs = {
-            k: v.to(model.device)
-            for k, v in tok(prompt, return_tensors="pt", padding="longest").items()
-        }
+        inputs = tok(prompt, return_tensors="pt", padding="longest").to(model.device)
         with torch.inference_mode():
             gen = model.generate(
                 **inputs,
@@ -232,7 +206,9 @@ class RagEngine:
                 pad_token_id=tok.pad_token_id,
             )
         return tok.decode(
-            gen[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
+            gen[0][inputs["input_ids"].shape[-1] :],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
         ).strip()
 
     @staticmethod
