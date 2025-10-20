@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import faiss
 import torch
@@ -10,7 +10,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .config import BOT_NAME, CACHE_DIR, SYSTEM_PROMPT, TEMPERATURE, TOP_K_RESULTS
+from .config import BOT_NAME, CACHE_DIR
 from .data_index import KnowledgeBase, load_knowledge_base
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -44,8 +44,8 @@ class RagEngine:
         chunk_overlap: int,
         embedding_model: str,
         chat_model: str,
-        temperature: float = TEMPERATURE,
-        top_k: int = TOP_K_RESULTS,
+        top_k: int,
+        generation_config: Dict[str, Any],
     ) -> None:
         if provider != "huggingface":
             raise ValueError("RagEngine now supports only the Hugging Face provider.")
@@ -60,8 +60,8 @@ class RagEngine:
         self._chunk_overlap = chunk_overlap
         self._embedding_model = embedding_model
         self._chat_model = chat_model
-        self._temperature = temperature
         self._top_k = top_k
+        self._generation_config = generation_config
         self._knowledge_base = None
         self._hf_index = None
         self._hf_doc_embeddings = None
@@ -191,16 +191,13 @@ class RagEngine:
             tokenize=False,
             add_generation_prompt=True,
         )
-        inputs = tok(prompt, return_tensors="pt", padding="longest").to(model.device)
+        inputs = tok(prompt, return_tensors="pt", padding=False).to(model.device)
+        gen_kwargs = {**self._generation_config}
+        gen_kwargs["eos_token_id"] = tok.eos_token_id
+        gen_kwargs["pad_token_id"] = tok.pad_token_id
+
         with torch.inference_mode():
-            gen = model.generate(
-                **inputs,
-                max_new_tokens=1024,
-                do_sample=False,
-                use_cache=True,
-                eos_token_id=tok.eos_token_id,
-                pad_token_id=tok.pad_token_id,
-            )
+            gen = model.generate(**inputs, **gen_kwargs)
         return tok.decode(
             gen[0][inputs["input_ids"].shape[-1] :],
             skip_special_tokens=True,
@@ -239,7 +236,7 @@ class RagEngine:
         gender: str,
         age: int,
         query: str,
-        system_prompt: str = SYSTEM_PROMPT,
+        system_prompt: str,
         progress_callback: Optional[Callable[[str, float], None]] = None,
     ) -> Retrieval:
         """Generate an answer for a medical query."""

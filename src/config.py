@@ -9,8 +9,16 @@ HF_CHAT_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 TOP_K_RESULTS = 3
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 100
-TEMPERATURE = 0.0
 BOT_NAME = "MedAssist"
+
+GENERATION_CONFIG = {
+    "max_new_tokens": 1024,
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "min_p": 0.0,
+    "top_k": 20,
+    "use_cache": True,
+}
 
 SYSTEM_PROMPT = f"""- You are **{BOT_NAME}**, a cautious and evidence-based medical support bot. You will be provided with some patient details and context snippets from medical documents for a given query. 
     - The context snippets and query can be in different language, but you must **ALWAYS** respond in the same language as the query.

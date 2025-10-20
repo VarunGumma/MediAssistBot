@@ -13,11 +13,11 @@ from src.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     DEFAULT_DOCS_DIR,
+    GENERATION_CONFIG,
     HF_CHAT_MODEL,
     HF_EMBEDDING_MODEL,
     SYSTEM_PROMPT,
     TOP_K_RESULTS,
-    TEMPERATURE,
 )
 from src.rag_engine import RagEngine
 
@@ -212,9 +212,9 @@ def load_engine(
     chunk_overlap: int,
     embedding_model: str,
     chat_model: str,
-    temperature: float,
     top_k: int,
     provider: str,
+    generation_config: Optional[dict[str, Any]] = None,
 ) -> RagEngine:
     if provider != "huggingface":
         raise ValueError("load_engine supports only the 'huggingface' provider")
@@ -226,8 +226,8 @@ def load_engine(
         chunk_overlap=chunk_overlap,
         embedding_model=embedding_model,
         chat_model=chat_model,
-        temperature=temperature,
         top_k=top_k,
+        generation_config=generation_config,
     )
 
 
@@ -257,6 +257,7 @@ def _render_sidebar(
             st.success("CUDA GPU detected. Ready to assist clinicians.", icon="✅")
         st.markdown("---")
         if not demo_mode:
+            gen_summary = ", ".join(f"{k}={v}" for k, v in GENERATION_CONFIG.items())
             st.caption(
                 f"Chat: `{chat_model}`  \n"
                 f"Embeddings: `{embedding_model}`  \n"
@@ -264,7 +265,8 @@ def _render_sidebar(
                 f"Cache Dir: `{CACHE_DIR}`  \n"
                 f"Chunk Size: `{CHUNK_SIZE}`  \n"
                 f"Chunk Overlap: `{CHUNK_OVERLAP}`  \n"
-                f"Top K Results: `{TOP_K_RESULTS}`"
+                f"Top K Results: `{TOP_K_RESULTS}`  \n"
+                f"Generation: `{gen_summary}`"
             )
             if total_time is not None:
                 st.caption(f"Last inference time: `{total_time:.2f}s`")
@@ -399,9 +401,9 @@ def main() -> None:
                         chunk_overlap=CHUNK_OVERLAP,
                         embedding_model=embedding_model,
                         chat_model=chat_model,
-                        temperature=TEMPERATURE,
                         top_k=TOP_K_RESULTS,
                         provider=provider,
+                        generation_config=GENERATION_CONFIG,
                     )
 
                 with st.status(
