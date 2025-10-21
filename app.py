@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 from html import escape
+import re
+
+import bleach
+from markdown import Markdown
 
 import torch
 
@@ -20,6 +24,38 @@ from src.config import (
     TOP_K_RESULTS,
 )
 from src.rag_engine import RagEngine
+
+
+_MD_CONVERTER = Markdown(extensions=["extra", "sane_lists", "smarty"])
+_ALLOWED_TAGS = {
+    "p",
+    "strong",
+    "em",
+    "ul",
+    "ol",
+    "li",
+    "code",
+    "pre",
+    "blockquote",
+    "br",
+    "a",
+}
+_ALLOWED_ATTRIBUTES = {"a": ["href", "title", "rel", "target"]}
+
+
+def _markdown_to_html(text: str) -> str:
+    html = _MD_CONVERTER.convert(text)
+    _MD_CONVERTER.reset()
+    html = html.strip()
+    html = re.sub(r"(\n\s*){3,}", "\n\n", html)
+    html = re.sub(r"\s{2,}", " ", html)
+    cleaned = bleach.clean(
+        html,
+        tags=_ALLOWED_TAGS,
+        attributes=_ALLOWED_ATTRIBUTES,
+        strip=True,
+    )
+    return cleaned
 
 
 st.set_page_config(
@@ -76,7 +112,7 @@ div.block-container {
     content: "";
     position: absolute;
     inset: -40px;
-    background: url('https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png') no-repeat right 5% center / 200px;
+    background: url('https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/113.png') no-repeat right 5% center / 200px;
     opacity: 0.25;
     pointer-events: none;
 }
@@ -154,6 +190,120 @@ input, textarea, select, .stNumberInput input, .stTextInput input {
     word-break: break-word;
 }
 
+.medibot-progress {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 1.2rem 0 1rem;
+}
+
+.medibot-progress__bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #ffde59 0%, #ff7a85 50%, #5d8eff 100%);
+    transition: width 180ms ease-out;
+}
+
+.chat-bubble {
+    max-width: 85%;
+    padding: 1rem 1.2rem;
+    border-radius: 18px;
+    box-shadow: 0 18px 45px rgba(9, 11, 36, 0.45);
+    position: relative;
+    line-height: 1.6;
+    margin-bottom: 0.5rem;
+}
+
+.chat-bubble.assistant {
+    background: linear-gradient(135deg, rgba(46, 54, 114, 0.95), rgba(88, 110, 206, 0.85));
+    color: #fefefe;
+    border-bottom-left-radius: 6px;
+}
+
+.chat-bubble.user {
+    background: linear-gradient(135deg, #7cf5c7, #3ac8a1);
+    color: #0b1124;
+    border-bottom-right-radius: 6px;
+    margin-left: auto;
+}
+
+.chat-meta {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0.8;
+    margin-bottom: 0;
+}
+
+.chat-meta-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.35rem;
+}
+
+.chat-meta-row.assistant,
+.chat-meta-row.user {
+    justify-content: space-between;
+}
+
+.chat-text {
+    white-space: normal;
+    word-break: break-word;
+    font-size: 0.97rem;
+    line-height: 1.5;
+}
+
+.chat-text p {
+    margin: 0 0 0.6rem;
+}
+
+.chat-text p:last-child {
+    margin-bottom: 0;
+}
+
+.chat-text ul,
+.chat-text ol {
+    margin: 0.4rem 0 0.6rem;
+    padding-left: 1.4rem;
+    list-style-position: outside;
+}
+
+.chat-text ul:last-child,
+.chat-text ol:last-child {
+    margin-bottom: 0;
+}
+
+.chat-text ul {
+    list-style-type: disc;
+}
+
+.chat-text ol {
+    list-style-type: decimal;
+}
+
+div[data-testid="stChatMessage"] {
+    padding: 0 !important;
+    background: transparent !important;
+}
+
+div[data-testid="stChatMessage"] > div[data-testid="stChatMessageContent"] {
+    padding: 0 !important;
+    background: transparent !important;
+}
+
+div[data-testid="stChatMessage"] div[data-testid="stMarkdownContainer"] {
+    padding: 0 !important;
+    background: transparent !important;
+}
+
+/* Hide avatars for cleaner appearance */
+div[data-testid="stChatMessage"] div[data-testid="stChatMessageAvatarContainer"] {
+    display: none !important;
+}
+
 .medibot-context {
     background: rgba(14, 16, 44, 0.95);
     border-radius: 18px;
@@ -218,6 +368,7 @@ def load_engine(
 ) -> RagEngine:
     if provider != "huggingface":
         raise ValueError("load_engine supports only the 'huggingface' provider")
+    generation_config = generation_config or GENERATION_CONFIG
     return RagEngine(
         provider=provider,
         api_key=api_key,
@@ -284,35 +435,75 @@ def _validate_inputs(gender: str, age: int, query: str) -> list[str]:
     return issues
 
 
+def _render_chat(messages: list[dict[str, Any]]) -> None:
+    if not messages:
+        st.info("Start the consultation by sharing the user's concern.")
+        return
+
+    for msg in messages:
+        role = msg.get("role", "assistant")
+        role_key = "user" if role == "user" else "assistant"
+        raw_content = msg.get("content", "") or ""
+        html_text = _markdown_to_html(raw_content)
+        chat_container = st.chat_message(role_key)
+
+        if role_key == "user":
+            meta_html = "<div class='chat-meta-row user'><span class='chat-meta'>You</span></div>"
+        else:
+            meta_html = (
+                f"<div class='chat-meta-row assistant'>"
+                f"<span class='chat-meta'>{BOT_NAME}</span>"
+                "</div>"
+            )
+
+        with chat_container:
+            st.markdown(
+                f"<div class='chat-bubble {role_key}'>{meta_html}<div class='chat-text'>{html_text}</div></div>",
+                unsafe_allow_html=True,
+            )
+            if role_key == "assistant" and msg.get("chunks"):
+                with st.expander("View retrieved context"):
+                    for idx, chunk in enumerate(msg.get("chunks", []), 1):
+                        source = escape(str(chunk.get("source", "unknown")))
+                        score = chunk.get("score")
+                        score_str = (
+                            f"{float(score):.4f}"
+                            if isinstance(score, (int, float))
+                            else "–"
+                        )
+                        st.markdown(f"**[{idx}] `{source}`** · Relevance {score_str}")
+                        content = chunk.get("content", "") or ""
+                        st.code(content.strip() or "(empty)", language="markdown")
+
+
 def main() -> None:
     has_cuda = torch.cuda.is_available()
     provider = "huggingface" if has_cuda else "demo"
     demo_mode = not has_cuda
     api_key: Optional[str] = None
 
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": f"Hello, I'm {BOT_NAME}. Share your query and I'll reference the knowledge base for you.",
+            }
+        ]
+    if "last_total_time" not in st.session_state:
+        st.session_state.last_total_time = None
+
     embedding_model = HF_EMBEDDING_MODEL
     chat_model = HF_CHAT_MODEL if has_cuda else "N/A"
     provider_label = "Hugging Face · Qwen3 (GPU)" if has_cuda else "Demo"
 
     control_panel = st.sidebar.empty()
-    results_panel = st.sidebar.empty()
-
-    _render_sidebar(
-        provider=provider,
-        demo_mode=demo_mode,
-        provider_label=provider_label,
-        chat_model=chat_model,
-        embedding_model=embedding_model,
-        total_time=None,
-        container=control_panel,
-    )
     _apply_theme()
 
     st.markdown(
         f"""
         <div class="medibot-hero">
             <h1>{BOT_NAME} Copilot</h1>
-            <p>Share the patient's context and ask targeted questions. {BOT_NAME} returns evidence-grounded guidance sourced from your private knowledge base—wrapped in a playful, Pokémon-inspired interface.</p>
+            <p>Keep the dialogue going—each follow-up draws on prior messages and the institutional knowledge base to stay precise.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -323,47 +514,44 @@ def main() -> None:
             "Demo mode is active. Attach this application to a CUDA-capable GPU to generate tailored guidance."
         )
 
-    with st.container():
-        st.markdown("### Patient Snapshot")
-        gender_options = [
-            "Select gender",
-            "Female",
-            "Male",
-            "Non-binary",
-            "Prefer not to say",
-        ]
-        col1, col2 = st.columns(2)
-        with col1:
-            gender = st.selectbox(
-                "Gender", options=gender_options, index=0, label_visibility="visible"
-            )
-        with col2:
-            age = st.number_input("Age", min_value=0, max_value=120, step=1, value=30)
-
-    st.markdown("### Compose Message")
-    if demo_mode:
-        st.caption("GPU: not detected (demo mode).")
-
-    query = st.text_area(
-        "Describe the case or ask for guidance",
-        height=220,
-        placeholder="Example: Persistent cough for two weeks with mild fever. Possible causes and triage guidance? (Feel free to write in any language.)",
-        help=f"{BOT_NAME} understands multilingual input for single-turn queries.",
-        disabled=demo_mode,
-    )
-
-    col_submit, col_kill = st.columns([3, 1])
-    with col_submit:
-        submit = st.button(
-            "Generate Guidance", use_container_width=True, disabled=demo_mode
+    st.markdown("### User Snapshot")
+    gender_options = [
+        "Select gender",
+        "Female",
+        "Male",
+        "Non-binary",
+        "Prefer not to say",
+    ]
+    col1, col2 = st.columns(2)
+    with col1:
+        gender = st.selectbox(
+            "Gender", options=gender_options, index=0, label_visibility="visible"
         )
-    with col_kill:
+    with col2:
+        age = st.number_input("Age", min_value=0, max_value=120, step=1, value=30)
+
+    toolbar_left, toolbar_right = st.columns([3, 1])
+    with toolbar_left:
+        reset = st.button(
+            "↺ Reset Conversation", use_container_width=True, type="secondary"
+        )
+    with toolbar_right:
         kill = st.button(
-            "🛑 Kill",
+            "🛑 STOP",
             use_container_width=True,
             type="secondary",
-            help="Emergency stop: halts generation and clears GPU memory",
+            help="Halts generation and clears GPU memory/caches.",
         )
+
+    if reset:
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": f"Conversation cleared. I'm ready for new details whenever you are.",
+            }
+        ]
+        st.session_state.last_total_time = None
+        st.experimental_rerun()
 
     if kill:
         try:
@@ -372,7 +560,7 @@ def main() -> None:
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
                     st.success("✓ GPU memory cleared")
-                except:
+                except Exception:
                     pass
             st.cache_resource.clear()
             st.cache_data.clear()
@@ -381,19 +569,27 @@ def main() -> None:
         except Exception as exc:
             st.error(f"Error during kill: {exc}")
 
-    if submit:
+    st.caption(f"Message {BOT_NAME}")
+    user_prompt = st.chat_input(
+        "Describe the case or ask a follow-up...",
+        disabled=demo_mode,
+        key="chat_input",
+    )
+
+    if user_prompt:
+        cleaned_prompt = user_prompt.strip()
         if demo_mode:
             st.warning(
                 "Demo mode is active. Attach a CUDA-capable GPU to generate responses."
             )
-        elif errors := _validate_inputs(gender, int(age), query):
+        elif errors := _validate_inputs(gender, int(age), cleaned_prompt):
             for issue in errors:
                 st.error(issue)
         else:
-            results_panel.empty()
+            history = list(st.session_state.messages)
+            st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
             try:
-                total_time = None
-                with st.spinner(f"Initializing {provider_label} pipeline..."):
+                with st.spinner(f"Preparing {provider_label} pipeline..."):
                     engine = load_engine(
                         api_key=api_key,
                         docs_dir=str(DEFAULT_DOCS_DIR),
@@ -406,33 +602,54 @@ def main() -> None:
                         generation_config=GENERATION_CONFIG,
                     )
 
-                with st.status(
-                    "🔍 Retrieving Context ...", expanded=True
-                ) as status_retrieve:
-                    status_retrieve.write(
-                        f"Searching knowledge base for relevant documents and generating response... "
-                    )
-                    progress_bar, progress_text = st.progress(0.0), st.empty()
+                progress_placeholder = st.empty()
 
-                    def update_progress(msg: str, frac: float):
-                        progress_bar.progress(frac)
-                        progress_text.text(msg)
-
-                    import time
-
-                    t0 = time.time()
-                    result = engine.answer(
-                        gender, int(age), query.strip(), SYSTEM_PROMPT, update_progress
-                    )
-                    total_time = time.time() - t0
-                    progress_bar.progress(1.0)
-                    progress_text.empty()
-                    n_chunks = len(result.supporting_chunks or [])
-                    status_retrieve.write(f"✓ Retrieved {n_chunks} relevant chunks")
-                    status_retrieve.update(
-                        label=f"✅ Retrieved {n_chunks} chunks", state="complete"
+                def _render_progress(fraction: float) -> None:
+                    clamped = min(max(fraction, 0.0), 1.0) * 100
+                    progress_placeholder.markdown(
+                        f"""
+                        <div class="medibot-progress">
+                            <div class="medibot-progress__bar" style="width: {clamped:.2f}%;"></div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
                     )
 
+                def update_progress(_: str, frac: float) -> None:
+                    _render_progress(frac)
+
+                import time
+
+                _render_progress(0.0)
+                t0 = time.time()
+                result = engine.answer(
+                    gender,
+                    int(age),
+                    cleaned_prompt,
+                    SYSTEM_PROMPT,
+                    update_progress,
+                    conversation_history=history,
+                )
+                total_time = time.time() - t0
+                _render_progress(1.0)
+                progress_placeholder.empty()
+
+                chunks_payload = [
+                    {
+                        "content": chunk.content,
+                        "source": chunk.source,
+                        "score": chunk.score,
+                    }
+                    for chunk in result.supporting_chunks
+                ]
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": result.answer,
+                        "chunks": chunks_payload,
+                    }
+                )
+                st.session_state.last_total_time = total_time
             except FileNotFoundError:
                 st.error(
                     "Knowledge base directory not found. Ensure it exists and contains markdown files."
@@ -441,56 +658,19 @@ def main() -> None:
                 st.error(str(exc))
             except Exception as exc:
                 st.error(f"The assistant could not complete the request: {exc}")
-            else:
-                # Display the answer
-                st.markdown(
-                    f"""
-                    <div class="medibot-response">
-                        <h3>🩺 Guidance from {BOT_NAME}</h3>
-                        <div class="medibot-answer" style="line-height:1.7;">{escape(result.answer)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                results_panel.empty()
-                with results_panel.container():
-                    if result.usage and result.usage.get("total_tokens"):
-                        st.caption(
-                            f"Token usage (total): `{result.usage['total_tokens']}`"
-                        )
-                    if result.supporting_chunks:
-                        st.markdown("### 📚 Retrieved Context")
-                        st.caption(
-                            f"Found {len(result.supporting_chunks)} supporting chunk(s). Expand to inspect sources."
-                        )
-                        with st.expander(
-                            f"📖 View {len(result.supporting_chunks)} Source Documents",
-                            expanded=False,
-                        ):
-                            for idx, chunk in enumerate(result.supporting_chunks, 1):
-                                st.markdown(f"**[{idx}] {chunk.source}**")
-                                st.markdown(f"*Relevance Score: {chunk.score:.4f}*")
-                                st.markdown(
-                                    f'<div style="background: rgba(255, 222, 89, 0.08); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 3px solid rgba(255, 222, 89, 0.5); max-height: 200px; overflow:auto; white-space: pre-wrap;">{escape(chunk.content.strip())}</div>',
-                                    unsafe_allow_html=True,
-                                )
-                        st.markdown("#### 📋 Quick Source List")
-                        for src in sorted({c.source for c in result.supporting_chunks}):
-                            st.markdown(f"- `{src}`")
-                    else:
-                        st.caption(
-                            "No supporting context retrieved for this query. The response may be less reliable."
-                        )
 
-                _render_sidebar(
-                    provider=provider,
-                    demo_mode=demo_mode,
-                    provider_label=provider_label,
-                    chat_model=chat_model,
-                    embedding_model=embedding_model,
-                    total_time=total_time,
-                    container=control_panel,
-                )
+    st.markdown("### Conversation Thread")
+    _render_chat(st.session_state.messages)
+
+    _render_sidebar(
+        provider=provider,
+        demo_mode=demo_mode,
+        provider_label=provider_label,
+        chat_model=chat_model,
+        embedding_model=embedding_model,
+        total_time=st.session_state.get("last_total_time"),
+        container=control_panel,
+    )
 
     st.markdown(
         f"""

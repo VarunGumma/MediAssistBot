@@ -61,7 +61,7 @@ class RagEngine:
         self._embedding_model = embedding_model
         self._chat_model = chat_model
         self._top_k = top_k
-        self._generation_config = generation_config
+        self._generation_config = dict(generation_config or {})
         self._knowledge_base = None
         self._hf_index = None
         self._hf_doc_embeddings = None
@@ -75,6 +75,26 @@ class RagEngine:
                 self._docs_dir, self._chunk_size, self._chunk_overlap
             )
         return self._knowledge_base
+
+    @staticmethod
+    def _format_history(
+        history: Optional[List[Dict[str, str]]], max_turns: int = 10
+    ) -> str:
+        if not history:
+            return ""
+        trimmed = history[-max_turns:]
+        lines: List[str] = []
+        for idx, message in enumerate(trimmed, 1):
+            role = message["role"].lower()
+            content = message["content"].strip()
+            if not content:
+                continue
+            if role == "assistant":
+                speaker = BOT_NAME
+            elif role == "user":
+                speaker = "USER"
+            lines.append(f"{idx}. **{speaker}**: {content}")
+        return "\n".join(lines)
 
     def _hf_cache_dir(self) -> Path:
         return (
@@ -111,7 +131,7 @@ class RagEngine:
     ) -> np.ndarray:
         model = self._get_sentence_embedder()
         encode_kwargs = {
-            "batch_size": 512,
+            "batch_size": 384,
             "convert_to_numpy": True,
             "normalize_embeddings": True,
             "show_progress_bar": True,
@@ -175,19 +195,16 @@ class RagEngine:
                     "Failed to load the Hugging Face chat model with FlashAttention 2. Verify flash-attn support and install the required CUDA extensions."
                 ) from exc
             model.eval()
-            if hasattr(model, "gradient_checkpointing_disable"):
-                model.gradient_checkpointing_disable()
             self._hf_model = model
 
         return self._hf_tokenizer, self._hf_model
 
-    def _generate_hf_response(self, system_prompt: str, chat_input: str) -> str:
+    def _generate_hf_response(
+        self, messages: List[Dict[str, str]]
+    ) -> str:
         tok, model = self._ensure_hf_llm()
         prompt = tok.apply_chat_template(
-            [
-                {"role": "system", "content": system_prompt.strip()},
-                {"role": "user", "content": chat_input},
-            ],
+            messages,
             tokenize=False,
             add_generation_prompt=True,
         )
@@ -204,32 +221,78 @@ class RagEngine:
             clean_up_tokenization_spaces=True,
         ).strip()
 
-    @staticmethod
-    def _build_retrieval_query(gender: str, age: int, query: str) -> str:
-        return f"Patient demographics: gender={gender}, age={age}.\nClinical question: {query.strip()}"
+    def _build_retrieval_query(
+        self,
+        gender: str,
+        age: int,
+        query: str,
+        conversation_history: Optional[List[Dict[str, str]]],
+    ) -> str:
+        history_block = self._format_history(conversation_history)
+        history_section = (
+            f"**Conversation so far**:\n{history_block}\n\n" if history_block else ""
+        )
+        return (
+            f"**Patient demographics**: gender=`{gender}`, age=`{age}`.\n{history_section}"
+            f"**Latest user question**: {query.strip()}"
+        )
 
     def _assemble_context(
-        self, gender: str, age: int, query: str, chunks: List[RetrievedChunk]
+        self,
+        gender: str,
+        age: int,
+        query: str,
+        chunks: List[RetrievedChunk],
     ) -> str:
         ctx = (
-            "No relevant context retrieved."
+            "No supporting knowledge base excerpts were retrieved."
             if not chunks
             else "\n\n".join(
                 [
-                    f"[{i}] **Source**: `{c.source}`\n**Excerpt**: ```\n{c.content.strip()}\n```"
+                    "\n".join(
+                        [
+                            f"\t[{i}] **Source**: {c.source}",
+                            "```",
+                            c.content.strip(),
+                            "```",
+                        ]
+                    )
                     for i, c in enumerate(chunks, 1)
                 ]
             )
         )
         return (
-            " | > Patient profile:\n"
-            f"\t- Gender: {gender}\n"
-            f"\t- Age: {age}\n\n"
-            " | > Patient question:\n"
-            f"\t- {query.strip()}\n\n"
-            " | > Knowledge base excerpts:\n"
-            f"{ctx}"
+            f" ► **Patient profile**:\nGender: `{gender}`, Age: `{age}`\n\n"
+            f" ► **User question**:\n{query.strip()}\n\n"
+            f" ► **Knowledge base excerpts**:\n{ctx}"
         )
+
+    def _build_generation_messages(
+        self,
+        system_prompt: str,
+        gender: str,
+        age: int,
+        query: str,
+        chunks: List[RetrievedChunk],
+        conversation_history: Optional[List[Dict[str, str]]],
+    ) -> List[Dict[str, str]]:
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": system_prompt.strip()},
+        ]
+        if conversation_history:
+            for message in conversation_history[-10:]:
+                role = message["role"].lower()
+                if role not in {"user", "assistant"}:
+                    continue
+                content = message["content"].strip()
+                if content:
+                    messages.append({"role": role, "content": content})
+
+        final_user_content = self._assemble_context(
+            gender, age, query, chunks
+        )
+        messages.append({"role": "user", "content": final_user_content})
+        return messages
 
     def answer(
         self,
@@ -238,12 +301,18 @@ class RagEngine:
         query: str,
         system_prompt: str,
         progress_callback: Optional[Callable[[str, float], None]] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Retrieval:
         """Generate an answer for a medical query."""
         if self._provider != "huggingface":
             raise RuntimeError("RagEngine is configured for Hugging Face usage only.")
         return self._answer_with_hf(
-            gender, age, query, system_prompt, progress_callback
+            gender,
+            age,
+            query,
+            system_prompt,
+            progress_callback,
+            conversation_history,
         )
 
     def _answer_with_hf(
@@ -253,13 +322,16 @@ class RagEngine:
         query: str,
         system_prompt: str,
         progress_callback: Optional[Callable[[str, float], None]] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Retrieval:
         if progress_callback:
             progress_callback("Loading embedding model...", 0.05)
         idx, kb = self._ensure_hf_index(), self._ensure_knowledge_base()
         if progress_callback:
             progress_callback("Building search query...", 0.1)
-        search_q = self._build_retrieval_query(gender, age, query)
+        search_q = self._build_retrieval_query(
+            gender, age, query, conversation_history
+        )
         if progress_callback:
             progress_callback("Embedding query...", 0.2)
         q_emb = self._hf_embed([search_q], prompt_name="query")[0]
@@ -283,11 +355,18 @@ class RagEngine:
         )
         if progress_callback:
             progress_callback(f"Retrieved {len(chunks)} relevant chunks", 0.6)
-        chat_in = self._assemble_context(gender, age, query, chunks)
+        gen_messages = self._build_generation_messages(
+            system_prompt,
+            gender,
+            age,
+            query,
+            chunks,
+            conversation_history,
+        )
         if progress_callback:
             progress_callback("Generating response with LLM...", 0.7)
         return Retrieval(
-            answer=self._generate_hf_response(system_prompt, chat_in),
+            answer=self._generate_hf_response(gen_messages),
             supporting_chunks=chunks,
             usage=None,
         )
